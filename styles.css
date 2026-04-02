@@ -1,0 +1,103 @@
+/* ---------------------------------------------------------------------------
+   Vault Sync — Remote cursor & presence styles
+   --------------------------------------------------------------------------- */
+
+/* Remote selection highlight */
+.cm-ySelection {
+  opacity: 0.3;
+}
+
+/* Cursor caret — thicker, more visible */
+.cm-ySelectionCaret {
+  border-left-width: 2.5px !important;
+  border-right-width: 2.5px !important;
+}
+
+/* Cursor dot — slightly larger */
+.cm-ySelectionCaretDot {
+  width: 0.55em !important;
+  height: 0.55em !important;
+  top: -0.25em !important;
+}
+
+/* Name label — always visible, matching Obsidian's UI font */
+.cm-ySelectionInfo {
+  opacity: 1 !important;
+  transition: none !important;
+  font-family: var(--font-interface, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif) !important;
+  font-style: normal !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.01em;
+  padding: 1px 6px !important;
+  border-radius: 3px 3px 3px 0 !important;
+  top: -1.45em !important;
+  color: #fff !important;
+  white-space: nowrap;
+  z-index: 10;
+  pointer-events: none;
+}
+
+/* Keep dot visible (don't shrink) since name is always shown */
+.cm-ySelectionCaret:hover > .cm-ySelectionCaretDot {
+  transform: none !important;
+}
+
+/* ---------------------------------------------------------------------------
+   Status bar — green/red connection indicator
+   --------------------------------------------------------------------------- */
+
+.collab-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--status-bar-font-size, 12px);
+}
+
+.collab-status .sync-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.collab-status.is-connected .sync-dot {
+  background-color: #4ade80;
+  box-shadow: 0 0 4px rgba(74, 222, 128, 0.5);
+}
+
+.collab-status.is-connected .sync-label {
+  color: #4ade80;
+}
+
+.collab-status.is-connecting .sync-dot {
+  background-color: #facc15;
+  animation: collab-pulse 1.2s ease-in-out infinite;
+}
+
+.collab-status.is-connecting .sync-label {
+  color: #facc15;
+}
+
+.collab-status.is-disconnected .sync-dot {
+  background-color: var(--text-muted);
+}
+
+.collab-status.is-disconnected .sync-label {
+  color: var(--text-muted);
+}
+
+.collab-status.is-error .sync-dot {
+  background-color: #ef4444;
+  box-shadow: 0 0 4px rgba(239, 68, 68, 0.5);
+}
+
+.collab-status.is-error .sync-label {
+  color: #ef4444;
+}
+
+@keyframes collab-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
