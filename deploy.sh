@@ -5,7 +5,7 @@
 set -euo pipefail
 
 VAULT="${1:?Usage: ./deploy.sh /path/to/vault}"
-DEST="$VAULT/.obsidian/plugins/vault-sync"
+DEST="$VAULT/.obsidian/plugins/obsidian-collab"
 
 npm run build
 mkdir -p "$DEST"

@@ -9,7 +9,7 @@ import {
   TFile,
 } from "obsidian";
 import { EditorView } from "@codemirror/view";
-import { StateEffect } from "@codemirror/state";
+import { StateEffect, Compartment } from "@codemirror/state";
 import * as Y from "yjs";
 import { yCollab, yUndoManagerKeymap } from "y-codemirror.next";
 import { WebsocketProvider } from "y-websocket";
@@ -56,11 +56,13 @@ function colorForName(name: string): (typeof PALETTE)[0] {
 interface CollabSettings {
   serverUrl: string;
   username: string;
+  token: string;
 }
 
 const DEFAULT_SETTINGS: CollabSettings = {
   serverUrl: "",
   username: "",
+  token: "",
 };
 
 // ---------------------------------------------------------------------------
@@ -73,6 +75,10 @@ interface DocSession {
   persistence: IndexeddbPersistence;
   undoManager: Y.UndoManager;
   filePath: string;
+  editorView: EditorView;
+  collabCompartment: Compartment;
+  writeTimer: ReturnType<typeof setTimeout> | null;
+  bound: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +90,7 @@ export default class CollabPlugin extends Plugin {
   private sessions = new Map<string, DocSession>();
   private connectedSessions = new Set<string>();
   private statusBarEl: HTMLElement | null = null;
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   async onload() {
     await this.loadSettings();
@@ -99,14 +106,14 @@ export default class CollabPlugin extends Plugin {
     );
 
     this.registerEvent(
-      this.app.workspace.on("layout-change", () => this.cleanupStaleSessions())
+      this.app.workspace.on("layout-change", () => this.syncSessionsToWorkspace())
     );
 
-    const activeLeaf = this.app.workspace.activeLeaf;
-    if (activeLeaf) this.handleLeafChange(activeLeaf);
+    this.syncSessionsToWorkspace();
   }
 
   onunload() {
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
     for (const [, session] of this.sessions) this.destroySession(session);
     this.sessions.clear();
     this.connectedSessions.clear();
@@ -131,12 +138,16 @@ export default class CollabPlugin extends Plugin {
 
     const persistence = new IndexeddbPersistence(`collab:${roomName}`, ydoc);
 
+    const wsParams: Record<string, string> = {};
+    if (this.settings.token) wsParams.token = this.settings.token;
+
     const provider = new WebsocketProvider(
       this.settings.serverUrl,
       roomName,
       ydoc,
       {
         connect: true,
+        params: wsParams,
         ...(Platform.isMobile ? { maxBackoffTime: 5000 } : { maxBackoffTime: 30000 }),
       }
     );
@@ -163,30 +174,40 @@ export default class CollabPlugin extends Plugin {
     const editorView = (markdownView.editor as any)?.cm as EditorView | null;
     if (!editorView) {
       provider.destroy();
+      persistence.destroy();
       ydoc.destroy();
       return;
     }
 
     // Connection status
+    let everConnected = false;
+    let offlineReady = false;
     provider.on("status", ({ status }: { status: string }) => {
       if (status === "connected") {
+        everConnected = true;
         this.connectedSessions.add(file.path);
       } else {
         this.connectedSessions.delete(file.path);
+        if (!everConnected) {
+          offlineReady = true;
+          bindEditor();
+        }
       }
       this.updateStatusBar();
     });
 
-    // Wait for both IndexedDB and WebSocket sync before binding to editor
+    const collabCompartment = new Compartment();
+
+    // Wait for IndexedDB plus either a confirmed remote sync or an offline fallback.
     let idbSynced = false;
     let wsSynced = false;
-    let bound = false;
 
     const bindEditor = () => {
-      if (bound || !idbSynced || !wsSynced) return;
-      bound = true;
+      if (session.bound || !idbSynced || (!wsSynced && !offlineReady)) return;
+      session.bound = true;
 
-      // Seed from local file only if server had no content
+      // Seed from the local file only after remote sync confirms the shared doc is empty,
+      // or when we never established a websocket session and must start from disk offline.
       if (ytext.length === 0) {
         const content = editorView.state.doc.toString();
         if (content.length > 0) {
@@ -194,28 +215,60 @@ export default class CollabPlugin extends Plugin {
         }
       }
 
+      const sharedContent = ytext.toString();
+      const editorContent = editorView.state.doc.toString();
+      if (sharedContent !== editorContent) {
+        editorView.dispatch({
+          changes: {
+            from: 0,
+            to: editorView.state.doc.length,
+            insert: sharedContent,
+          },
+        });
+      }
+
       editorView.dispatch({
         effects: StateEffect.appendConfig.of([
-          yCollab(ytext, provider.awareness, { undoManager }),
-          keymap.of(yUndoManagerKeymap),
+          collabCompartment.of([
+            yCollab(ytext, provider.awareness, { undoManager }),
+            keymap.of(yUndoManagerKeymap),
+          ]),
         ]),
       });
     };
 
-    persistence.once("synced", () => { idbSynced = true; bindEditor(); });
-    provider.once("synced", () => { wsSynced = true; bindEditor(); });
-    setTimeout(() => { if (!wsSynced) { wsSynced = true; bindEditor(); } }, 5000);
+    const session: DocSession = {
+      ydoc,
+      provider,
+      persistence,
+      undoManager,
+      filePath: file.path,
+      editorView,
+      collabCompartment,
+      writeTimer: null,
+      bound: false,
+    };
 
-    const session: DocSession = { ydoc, provider, persistence, undoManager, filePath: file.path };
+    persistence.once("synced", () => { idbSynced = true; bindEditor(); });
+    provider.on("sync", (isSynced: boolean) => {
+      if (!isSynced) return;
+      wsSynced = true;
+      bindEditor();
+    });
+    setTimeout(() => {
+      if (!wsSynced && !everConnected) {
+        offlineReady = true;
+        bindEditor();
+      }
+    }, 5000);
+
     this.sessions.set(file.path, session);
 
     // Write CRDT content back to .md file (debounced)
-    let writeTimer: ReturnType<typeof setTimeout> | null = null;
     ytext.observe(() => {
-      if (writeTimer) clearTimeout(writeTimer);
-      writeTimer = setTimeout(async () => {
+      if (session.writeTimer) clearTimeout(session.writeTimer);
+      session.writeTimer = setTimeout(async () => {
         const content = ytext.toString();
-        if (!content) return;
         try {
           const existing = await this.app.vault.read(file);
           if (existing !== content) await this.app.vault.modify(file, content);
@@ -225,11 +278,29 @@ export default class CollabPlugin extends Plugin {
   }
 
   private destroySession(session: DocSession) {
+    if (session.writeTimer) {
+      clearTimeout(session.writeTimer);
+      session.writeTimer = null;
+    }
+
+    if (session.bound) {
+      try {
+        session.editorView.dispatch({
+          effects: session.collabCompartment.reconfigure([]),
+        });
+      } catch {
+        // Editor might already be gone during shutdown/layout teardown.
+      }
+      session.bound = false;
+    }
+
     // Flush final content to disk
     const file = this.app.vault.getAbstractFileByPath(session.filePath);
     if (file instanceof TFile) {
       const content = session.ydoc.getText("content").toString();
-      if (content) this.app.vault.modify(file, content);
+      void this.app.vault.modify(file, content).catch(() => {
+        // File may have been deleted/renamed while the session was active.
+      });
     }
 
     this.connectedSessions.delete(session.filePath);
@@ -240,20 +311,35 @@ export default class CollabPlugin extends Plugin {
     session.ydoc.destroy();
   }
 
-  private cleanupStaleSessions() {
-    const openPaths = new Set<string>();
+  private syncSessionsToWorkspace(forceReconnect = false) {
+    const openViews = new Map<string, MarkdownView>();
     this.app.workspace.iterateAllLeaves((leaf) => {
       if (leaf.view instanceof MarkdownView && leaf.view.file) {
-        openPaths.add(leaf.view.file.path);
+        openViews.set(leaf.view.file.path, leaf.view);
       }
     });
 
+    if (forceReconnect) {
+      for (const [, session] of this.sessions) this.destroySession(session);
+      this.sessions.clear();
+      this.connectedSessions.clear();
+    }
+
     for (const [path, session] of this.sessions) {
-      if (!openPaths.has(path)) {
+      if (!openViews.has(path)) {
         this.destroySession(session);
         this.sessions.delete(path);
       }
     }
+
+    if (this.settings.serverUrl) {
+      for (const [path, view] of openViews) {
+        if (!this.sessions.has(path) && view.file) {
+          this.createSession(view.file, view);
+        }
+      }
+    }
+
     this.updateStatusBar();
   }
 
@@ -296,8 +382,26 @@ export default class CollabPlugin extends Plugin {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
   }
 
-  async saveSettings() {
+  private scheduleSessionRefresh() {
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = null;
+      this.syncSessionsToWorkspace(true);
+    }, 500);
+  }
+
+  async saveSettings(previousSettings?: CollabSettings) {
     await this.saveData(this.settings);
+
+    const connectionChanged = !!previousSettings && (
+      previousSettings.serverUrl !== this.settings.serverUrl ||
+      previousSettings.token !== this.settings.token
+    );
+
+    if (connectionChanged) {
+      this.scheduleSessionRefresh();
+    }
+
     // Push updated name to all active sessions
     for (const [, session] of this.sessions) {
       const states = Array.from(session.provider.awareness.getStates().keys()).sort((a, b) => a - b);
@@ -328,7 +432,7 @@ class CollabSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl("h2", { text: "Vault Sync" });
+    containerEl.createEl("h2", { text: "Collab" });
     containerEl.createEl("p", {
       text: "Real-time collaborative editing via Yjs CRDTs.",
       cls: "setting-item-description",
@@ -342,8 +446,9 @@ class CollabSettingTab extends PluginSettingTab {
           .setPlaceholder("ws://your-server:1234")
           .setValue(this.plugin.settings.serverUrl)
           .onChange(async (v) => {
+            const previous = { ...this.plugin.settings };
             this.plugin.settings.serverUrl = v.trim();
-            await this.plugin.saveSettings();
+            await this.plugin.saveSettings(previous);
           })
       );
 
@@ -355,8 +460,9 @@ class CollabSettingTab extends PluginSettingTab {
           .setPlaceholder("Your name")
           .setValue(this.plugin.settings.username)
           .onChange(async (v) => {
+            const previous = { ...this.plugin.settings };
             this.plugin.settings.username = v.trim();
-            await this.plugin.saveSettings();
+            await this.plugin.saveSettings(previous);
             const c = colorForName(v.trim() || "Anonymous");
             swatch.style.background = c.color;
             swatch.style.boxShadow = `0 0 4px ${c.color}88`;
@@ -366,5 +472,20 @@ class CollabSettingTab extends PluginSettingTab {
     const initColor = colorForName(this.plugin.settings.username || "Anonymous");
     const swatch = nameSetting.controlEl.createEl("span");
     swatch.style.cssText = `display:inline-block;width:16px;height:16px;border-radius:50%;background:${initColor.color};margin-left:8px;vertical-align:middle;box-shadow:0 0 4px ${initColor.color}88`;
+
+    new Setting(containerEl)
+      .setName("Token")
+      .setDesc("Access token (leave empty if not required by server)")
+      .addText((text) =>
+        text
+          .setPlaceholder("")
+          .setValue(this.plugin.settings.token)
+          .then((t) => { t.inputEl.type = "password"; })
+          .onChange(async (v) => {
+            const previous = { ...this.plugin.settings };
+            this.plugin.settings.token = v.trim();
+            await this.plugin.saveSettings(previous);
+          })
+      );
   }
 }
