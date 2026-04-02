@@ -20,19 +20,21 @@ import { keymap } from "@codemirror/view";
 // Color palette — 12 maximally-spaced, dark-theme friendly colors
 // ---------------------------------------------------------------------------
 
+// Muted, medium-saturation colors that work on both Obsidian default dark and light.
+// Not too vivid against dark (#1e1e1e), not too faint against light (#ffffff).
 const PALETTE = [
-  { color: "#E11D48", light: "#E11D4820" }, // rose
-  { color: "#2563EB", light: "#2563EB20" }, // blue
-  { color: "#16A34A", light: "#16A34A20" }, // green
-  { color: "#D97706", light: "#D9770620" }, // amber
-  { color: "#7C3AED", light: "#7C3AED20" }, // purple
-  { color: "#0891B2", light: "#0891B220" }, // cyan
-  { color: "#EA580C", light: "#EA580C20" }, // orange
-  { color: "#DB2777", light: "#DB277720" }, // pink
-  { color: "#4F46E5", light: "#4F46E520" }, // indigo
-  { color: "#65A30D", light: "#65A30D20" }, // lime
-  { color: "#0D9488", light: "#0D948820" }, // teal
-  { color: "#DC2626", light: "#DC262620" }, // red
+  { color: "#c47fd5", light: "#c47fd518" }, // soft purple
+  { color: "#5ba3cf", light: "#5ba3cf18" }, // slate blue
+  { color: "#6bba7b", light: "#6bba7b18" }, // sage green
+  { color: "#d4915e", light: "#d4915e18" }, // warm clay
+  { color: "#c75b7a", light: "#c75b7a18" }, // dusty rose
+  { color: "#4bac9e", light: "#4bac9e18" }, // muted teal
+  { color: "#c9a645", light: "#c9a64518" }, // soft gold
+  { color: "#7a8dd4", light: "#7a8dd418" }, // periwinkle
+  { color: "#b86e4f", light: "#b86e4f18" }, // terracotta
+  { color: "#58a186", light: "#58a18618" }, // seafoam
+  { color: "#a8709a", light: "#a8709a18" }, // mauve
+  { color: "#6a9ec0", light: "#6a9ec018" }, // steel blue
 ];
 
 function colorByIndex(index: number): (typeof PALETTE)[0] {

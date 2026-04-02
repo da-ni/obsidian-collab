@@ -2,15 +2,15 @@
    Vault Sync — Remote cursor & presence styles
    --------------------------------------------------------------------------- */
 
-/* Remote selection highlight */
+/* Remote selection highlight — subtle, not distracting */
 .cm-ySelection {
-  opacity: 0.3;
+  opacity: 0.2;
 }
 
-/* Cursor caret — thicker, more visible */
+/* Cursor caret — visible but not heavy */
 .cm-ySelectionCaret {
-  border-left-width: 2.5px !important;
-  border-right-width: 2.5px !important;
+  border-left-width: 2px !important;
+  border-right-width: 2px !important;
 }
 
 /* Cursor dot — slightly larger */
