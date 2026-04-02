@@ -1,0 +1,17 @@
+{
+  "name": "collab-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "npx tsx server.ts"
+  },
+  "dependencies": {
+    "y-websocket": "^2.0.4",
+    "yjs": "^13.6.18",
+    "ws": "^8.17.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.15.0"
+  }
+}
